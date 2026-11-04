@@ -355,7 +355,7 @@ main.innerHTML = `
             <label class="field">
               <span class="field__label">বিভাগ (Category) <i>*</i></span>
               <select id="fCat">
-                <option value="">— বিভাগ বাছাই করুন —</option>
+                <option value="" hidden selected>— বিভাগ বাছাই করুন —</option>
                 ${CATEGORIES.map(c => `<option value="${c.slug}">${c.name}</option>`).join("")}
               </select>
               <span class="field__err" id="eCat"></span>
@@ -363,7 +363,7 @@ main.innerHTML = `
             <label class="field">
               <span class="field__label">সাব-ক্যাটাগরি (Sub Category)</span>
               <select id="fSubcat" disabled>
-                <option value="">— প্রথমে বিভাগ বাছাই করুন —</option>
+                <option value="" hidden selected>— প্রথমে বিভাগ বাছাই করুন —</option>
               </select>
             </label>
           </div>
@@ -374,20 +374,21 @@ main.innerHTML = `
               <label class="field">
                 <span class="field__label">প্রশাসনিক বিভাগ</span>
                 <select id="fDivision">
-                  <option value="">— বাছাই করুন —</option>
+                  <option value="" hidden selected>— বাছাই করুন —</option>
+                  <option value="">নেই</option>
                   ${BD_DIVISIONS.map(d => `<option value="${d.slug}">${d.name}</option>`).join("")}
                 </select>
               </label>
               <label class="field">
                 <span class="field__label">জেলা</span>
                 <select id="fDistrict" disabled>
-                  <option value="">— বাছাই করুন —</option>
+                  <option value="" hidden selected>— বাছাই করুন —</option>
                 </select>
               </label>
               <label class="field">
                 <span class="field__label">উপজেলা</span>
                 <select id="fUpazila" disabled>
-                  <option value="">— আগে জেলা বাছাই করুন —</option>
+                  <option value="" hidden selected>— আগে জেলা বাছাই করুন —</option>
                 </select>
               </label>
             </div>
@@ -478,7 +479,7 @@ main.innerHTML = `
     </section>
 
     </div>
-    <footer class="app__foot"><span>© ${bnNum(new Date().getFullYear())} <b>${esc(SITE.name)}</b> | সর্বস্বত্ব সংরক্ষিত</span><span>সম্পাদকীয় ডেস্ক</span></footer>
+    <footer class="app__foot"><span>© ${bnNum(dhakaToday().getFullYear())} <b>${esc(SITE.name)}</b> | সর্বস্বত্ব সংরক্ষিত</span><span>সম্পাদকীয় ডেস্ক</span></footer>
   </div>
 </div>`;
 
@@ -814,12 +815,13 @@ const fSubcat = document.getElementById("fSubcat");
 fCat.addEventListener("change", () => {
   const list = SUBCATEGORIES[fCat.value] || [];
   if (!list.length) {
-    fSubcat.innerHTML = `<option value="">— এই বিভাগে সাব-ক্যাটাগরি নেই —</option>`;
+    fSubcat.innerHTML = `<option value="" hidden selected>— এই বিভাগে সাব-ক্যাটাগরি নেই —</option>`;
     fSubcat.disabled = true;
     return;
   }
   fSubcat.disabled = false;
-  fSubcat.innerHTML = `<option value="">— সাব-ক্যাটাগরি বাছাই করুন —</option>` +
+  fSubcat.innerHTML = `<option value="" hidden selected>— সাব-ক্যাটাগরি বাছাই করুন —</option>`
+    + `<option value="">নেই</option>` +
     list.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
 });
 
@@ -835,7 +837,8 @@ function fillUpazilas(keep = "") {
   const match = list.find(u => sameBn(u, keep));
   const extra = keep && !match ? [keep] : [];
   fUpazila.disabled = !list.length && !extra.length;
-  fUpazila.innerHTML = `<option value="">${fUpazila.disabled ? "— আগে জেলা বাছাই করুন —" : "— উপজেলা বাছাই করুন (ঐচ্ছিক) —"}</option>` +
+  fUpazila.innerHTML = `<option value="" hidden selected>${fUpazila.disabled ? "— আগে জেলা বাছাই করুন —" : "— উপজেলা বাছাই করুন (ঐচ্ছিক) —"}</option>`
+    + (fUpazila.disabled ? "" : `<option value="">নেই</option>`) +
     [...list, ...extra].map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join("");
   fUpazila.value = match || keep || "";
 }
@@ -843,13 +846,14 @@ function fillUpazilas(keep = "") {
 fDivision.addEventListener("change", () => {
   const list = BD_DISTRICTS[fDivision.value] || [];
   if (!list.length) {
-    fDistrict.innerHTML = `<option value="">— বাছাই করুন —</option>`;
+    fDistrict.innerHTML = `<option value="" hidden selected>— বাছাই করুন —</option>`;
     fDistrict.disabled = true;
     fillUpazilas();
     return;
   }
   fDistrict.disabled = false;
-  fDistrict.innerHTML = `<option value="">— জেলা বাছাই করুন —</option>` +
+  fDistrict.innerHTML = `<option value="" hidden selected>— জেলা বাছাই করুন —</option>`
+    + `<option value="">নেই</option>` +
     list.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join("");
   fillUpazilas();
 });
@@ -897,9 +901,9 @@ function resetForm(form) {
   form.reset();
   rteBox.innerHTML = "";
   updateCount();
-  fSubcat.innerHTML = `<option value="">— প্রথমে বিভাগ বাছাই করুন —</option>`;
+  fSubcat.innerHTML = `<option value="" hidden selected>— প্রথমে বিভাগ বাছাই করুন —</option>`;
   fSubcat.disabled = true;
-  fDistrict.innerHTML = `<option value="">— বাছাই করুন —</option>`;
+  fDistrict.innerHTML = `<option value="" hidden selected>— বাছাই করুন —</option>`;
   fDistrict.disabled = true;
   fillUpazilas();
   clearImage();

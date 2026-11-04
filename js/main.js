@@ -130,13 +130,68 @@ function imgFor(a) {
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 
+/* ---------- সঠিক সময় -------------------------------------------------
+   পাঠকের কম্পিউটার/ফোনের ঘড়ি ভুল থাকলেও তারিখ ঠিক দেখাতে সময় নেওয়া হয় সাইটের
+   সার্ভার থেকে (প্রতিটি উত্তরের "Date" হেডার — হোস্টিং সার্ভারের ঘড়ি ইন্টারনেট টাইম
+   সার্ভারের সঙ্গে মেলানো থাকে)। গুগল থেকে সরাসরি সময় পড়তে ব্রাউজার দেয় না, তাই এই পথ।
+   তারিখ সবসময় বাংলাদেশ সময়ে (Asia/Dhaka) — কম্পিউটারের টাইম-জোন ভুল থাকলেও।     */
+let clockSkew = 0;   /* সার্ভারের সময় − কম্পিউটারের সময় (মিলিসেকেন্ড) */
+try { clockSkew = Number(sessionStorage.getItem("db-skew")) || 0; } catch (e) { /* স্টোরেজ বন্ধ */ }
+const nowMs = () => Date.now() + clockSkew;
+
+/* আজ বাংলাদেশে কোন তারিখ — Date হিসেবে (দিন/মাস/বছর/বার পড়ার জন্য) */
+function dhakaToday() {
+  const now = new Date(nowMs());
+  try {
+    const p = {};
+    new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Dhaka", year: "numeric", month: "numeric", day: "numeric" })
+      .formatToParts(now).forEach(x => { p[x.type] = x.value; });
+    return new Date(+p.year, p.month - 1, +p.day);
+  } catch (e) { return now; }   /* খুব পুরোনো ব্রাউজার */
+}
+
+/* সার্ভারের ঘড়ির সঙ্গে মিলিয়ে নেওয়া — পেজ খোলার পর একবার; ভুল থাকলে তারিখ বদলে যায়।
+   ফল এই ট্যাবে মনে থাকে, তাই পরের পাতায় প্রথম থেকেই ঠিক তারিখ আসে। */
+function syncClock() {
+  if (location.protocol === "file:") return;
+  fetch(location.pathname, { method: "HEAD", cache: "no-store" }).then(r => {
+    const t = Date.parse(r.headers.get("Date") || "");
+    if (!t) return;
+    clockSkew = t - Date.now();
+    try { sessionStorage.setItem("db-skew", String(clockSkew)); } catch (e) { /* স্টোরেজ বন্ধ */ }
+    $$(".js-today").forEach(el => { el.innerHTML = todayLine(); });
+  }).catch(() => { /* অফলাইন — কম্পিউটারের ঘড়িই থাকে */ });
+}
+
 /* ---------- আজকের তারিখ (বাংলা) -------------------------------------- */
-function bnToday() {
+function bnToday(d = dhakaToday()) {
   const days = ["রোববার", "সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার"];
   const months = ["জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
     "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর"];
-  const d = new Date();
   return `${days[d.getDay()]}, ${bnNum(d.getDate())} ${months[d.getMonth()]} ${bnNum(d.getFullYear())}`;
+}
+
+/* হেডারের তারিখ-লাইন: ইংরেজি মাসের তারিখ · বঙ্গাব্দ */
+function todayLine() {
+  const d = dhakaToday();
+  return `<span>${bnToday(d)}</span><span class="dateline__bn">${bnBongabdo(d)}</span>`;
+}
+
+/* বঙ্গাব্দ — বাংলাদেশের সংশোধিত বাংলা পঞ্জিকা (২০১৯): ১ বৈশাখ = ১৪ এপ্রিল;
+   বৈশাখ–আশ্বিন ৩১ দিন, কার্তিক–মাঘ ও চৈত্র ৩০ দিন, ফাল্গুন ২৯ দিন (অধিবর্ষে ৩০)।
+   যেমন: "১৭ কার্তিক, ১৪৩৩ বঙ্গাব্দ" */
+function bnBongabdo(d = dhakaToday()) {
+  const months = ["বৈশাখ", "জ্যৈষ্ঠ", "আষাঢ়", "শ্রাবণ", "ভাদ্র", "আশ্বিন",
+    "কার্তিক", "অগ্রহায়ণ", "পৌষ", "মাঘ", "ফাল্গুন", "চৈত্র"];
+  const day = (y, m, n) => Date.UTC(y, m, n) / 864e5;
+  const today = day(d.getFullYear(), d.getMonth(), d.getDate());
+  let y = d.getFullYear();
+  if (today < day(y, 3, 14)) y--;               /* পহেলা বৈশাখের আগে — আগের বঙ্গাব্দ */
+  const leap = (y + 1) % 4 === 0 && ((y + 1) % 100 !== 0 || (y + 1) % 400 === 0);
+  const lens = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, leap ? 30 : 29, 30];
+  let rest = today - day(y, 3, 14), m = 0;
+  while (rest >= lens[m]) rest -= lens[m++];
+  return `${bnNum(rest + 1)} ${months[m]}, ${bnNum(y - 593)} বঙ্গাব্দ`;
 }
 
 /* ---------- আইকন ------------------------------------------------------ */
@@ -239,7 +294,7 @@ function buildHeader(active) {
   <header class="press">
     <div class="wrap">
       <div class="dateline">
-        <span class="dateline__date">${ICON.cal}${bnToday()}</span>
+        <span class="dateline__date">${ICON.cal}<span class="dateline__today js-today">${todayLine()}</span></span>
         <span class="dateline__mid">অনলাইন সংস্করণ</span>
         <span class="dateline__right">
           <button class="iconbtn js-search-toggle" type="button" aria-label="খুঁজুন">${ICON.search}</button>
@@ -323,7 +378,7 @@ function buildFooter() {
         ${socialLinks()}
       </div>
       <div class="footer__copy">
-        <span>© ${bnNum(new Date().getFullYear())} ${SITE.name} — সর্বস্বত্ব সংরক্ষিত।</span>
+        <span>© ${bnNum(dhakaToday().getFullYear())} ${SITE.name} — সর্বস্বত্ব সংরক্ষিত।</span>
         <nav class="footer__pages" aria-label="সাইটের তথ্য">
           <a href="gallery.html">ফটো গ্যালারি</a>
           <a href="videos.html">ভিডিও গ্যালারি</a>
@@ -730,7 +785,7 @@ function mountShell(activeCat) {
   /* যে তথ্য-পাতায় আছি, ফুটারে তার লিংকের নিচে দাগ থাকে */
   const here = location.pathname.split("/").pop();
   $$(".footer__pages a").forEach(a => { if (a.getAttribute("href") === here) a.setAttribute("aria-current", "page"); });
-  initTheme(); initNav(); initSearch(); initToTop();
+  initTheme(); initNav(); initSearch(); initToTop(); syncClock();
   enableInstantNav();
 
   /* লোকাল মোডে (PHP সার্ভার নেই) সতর্ক করা — অ্যাডমিন পাতায় সবসময়, অন্য পাতায়

@@ -379,7 +379,7 @@ function logOut() { safeStore.del(TOKEN_KEY); safeStore.del(AUTH_KEY); }
 /* ---------- সময় → "৩ ঘণ্টা আগে" --------------------------------------- */
 function timeAgo(ms) {
   if (!ms) return "";
-  const s = Math.floor((Date.now() - ms) / 1000);
+  const s = Math.floor((nowMs() - ms) / 1000);   /* nowMs: সার্ভারের সঙ্গে মেলানো সময় (main.js) */
   if (s < 60) return "এইমাত্র";
   const m = Math.floor(s / 60);
   if (m < 60) return `${bnNum(m)} মিনিট আগে`;

@@ -16,28 +16,28 @@ const show = (id, on) => { const el = document.getElementById(id); if (el) el.hi
   const lfDistrict = document.getElementById("lfDistrict");
   const lfUpazila  = document.getElementById("lfUpazila");
 
-  lfDivision.innerHTML = `<option value="">বিভাগ</option>` +
+  /* প্রথম লাইনটি শুধু নাম দেখায় (hidden) — খোলা তালিকায় বাছাইযোগ্য অপশন হয়ে আসে না */
+  const label = text => `<option value="" hidden selected>${text}</option>`;
+
+  lfDivision.innerHTML = label("বিভাগ") +
     BD_DIVISIONS.map(d => `<option value="${d.slug}">${d.name.replace(/ বিভাগ$/, "")}</option>`).join("");
 
   lfDivision.addEventListener("change", () => {
-    lfUpazila.innerHTML = `<option value="">যেকোনো উপজেলা</option>`;
+    lfUpazila.innerHTML = label("উপজেলা");
     lfUpazila.disabled = true;
     const list = BD_DISTRICTS[lfDivision.value] || [];
-    if (!list.length) {
-      lfDistrict.innerHTML = `<option value="">জেলা</option>`;
-      lfDistrict.disabled = true;
-      return;
-    }
-    lfDistrict.disabled = false;
-    lfDistrict.innerHTML = `<option value="">যেকোনো জেলা</option>` +
+    lfDistrict.disabled = !list.length;
+    lfDistrict.innerHTML = label("জেলা") +
+      (list.length ? `<option value="*">পুরো বিভাগের খবর</option>` : "") +
       list.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join("");
   });
 
   /* জেলার সব উপজেলা (geo.js-এর পূর্ণ তালিকা থেকে — আগে শুধু খবরে লেখা উপজেলা দেখাত) */
   lfDistrict.addEventListener("change", () => {
-    const upazilas = lfDistrict.value ? upazilasOf(lfDistrict.value) : [];
+    if (lfDistrict.value === "*") { lfDistrict.value = ""; go(); return; }   /* পুরো বিভাগ */
+    const upazilas = upazilasOf(lfDistrict.value);
     lfUpazila.disabled = !upazilas.length;
-    lfUpazila.innerHTML = `<option value="">উপজেলা</option>` +
+    lfUpazila.innerHTML = label("উপজেলা") +
       (upazilas.length ? `<option value="*">পুরো জেলার খবর</option>` : "") +
       upazilas.map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join("");
   });

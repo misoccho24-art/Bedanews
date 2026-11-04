@@ -128,7 +128,9 @@ body.no-scroll{overflow:hidden}
   display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;
   font-size:.8rem;color:var(--muted);padding-bottom:12px;border-bottom:1px solid var(--hair);
 }
-.dateline__date{display:flex;align-items:center;gap:8px}
+.dateline__date{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px}
+.dateline__today{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px}
+.dateline__bn::before{content:"·";margin-right:8px}
 .dateline__date svg{width:14px;height:14px}
 .dateline__mid{font-family:var(--head);font-style:italic;color:var(--ink-2)}
 .dateline__right{display:flex;justify-content:flex-end;align-items:center;gap:6px}

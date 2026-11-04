@@ -31,11 +31,17 @@ if (($id !== '' || $n !== '') && is_file($postFile)) {
     }
 }
 
-$scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
+/* https কি না — অনেক হোস্টে (Cloudflare/প্রক্সির পেছনে) $_SERVER['HTTPS'] খালি থাকে,
+   তখন ছবির ঠিকানা http:// হয়ে যেত আর ফেসবুক অনেক সময় ছবিটি আনতে পারত না */
+$https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+      || (isset($_SERVER['SERVER_PORT']) && (string)$_SERVER['SERVER_PORT'] === '443')
+      || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && stripos($_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false)
+      || (isset($_SERVER['HTTP_CF_VISITOR']) && stripos($_SERVER['HTTP_CF_VISITOR'], 'https') !== false);
+$scheme = $https ? 'https://' : 'http://';
 $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '';
 $origin = $scheme . $host;
-$canonical = $origin . '/article.html' . ($id !== '' ? ('?id=' . rawurlencode($id)) : '');
-if ($post && isset($post['no']) && !empty($post['cat'])) {
+$canonical = $origin . '/article.html' . ($id !== '' ? ('?id=' . rawurlencode($id)) : ($n !== '' ? ('?n=' . (int)$n) : ''));
+if ($post && isset($post['no'])) {
     $canonical = $origin . '/article.html?n=' . (int)$post['no'];
 }
 
@@ -44,11 +50,21 @@ $title = $post ? $post['title'] : $siteName;
 $desc  = $post ? (!empty($post['excerpt']) ? $post['excerpt'] : $post['title'])
                : 'বেদা নিউজ-এর বিস্তারিত সংবাদ।';
 
-/* শুধু আসলেই আপলোড করা ছবি থাকলে og:image বসে — অটো-জেনারেটেড
-   গ্রেডিয়েন্ট ছবিটি (SVG data URL) ফেসবুক দেখাতে পারে না বলে ব্যবহার হয় না */
+/* শেয়ারের ছবি: খবরের আপলোড করা ছবি; না থাকলে সাইটের শেয়ার-কার্ড (img/share.png)।
+   অটো-জেনারেটেড গ্রেডিয়েন্ট ছবিটি (SVG data URL) ফেসবুক দেখাতে পারে না।
+   ছবির মাপ (width/height) ও ধরন বলে দেওয়া জরুরি — না দিলে ফেসবুক প্রথমবার শেয়ারের
+   সময় ছবি ছাড়াই শুধু লেখা দেখায়, কারণ ছবিটি সে পরে আলাদাভাবে আনে। */
+$imgPath = 'img/share.png';
+if ($post && !empty($post['img']) && strpos($post['img'], 'uploads/') === 0 && strpos($post['img'], '..') === false
+    && is_file(__DIR__ . '/' . $post['img'])) {
+    $imgPath = $post['img'];
+}
 $image = '';
-if ($post && !empty($post['img']) && strpos($post['img'], 'uploads/') === 0 && strpos($post['img'], '..') === false) {
-    $image = $origin . '/' . ltrim($post['img'], '/');
+$imgW = 0; $imgH = 0; $imgType = '';
+if (is_file(__DIR__ . '/' . $imgPath)) {
+    $image = $origin . '/' . implode('/', array_map('rawurlencode', explode('/', $imgPath)));
+    $info = @getimagesize(__DIR__ . '/' . $imgPath);
+    if ($info) { $imgW = (int)$info[0]; $imgH = (int)$info[1]; $imgType = (string)$info['mime']; }
 }
 
 function ogesc($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
@@ -69,9 +85,16 @@ function ogesc($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 <meta property="og:url" content="<?php echo ogesc($canonical); ?>">
 <?php if ($image !== ''): ?>
 <meta property="og:image" content="<?php echo ogesc($image); ?>">
-<meta property="og:image:secure_url" content="<?php echo ogesc($image); ?>">
-<meta property="og:image:type" content="image/jpeg">
+<?php if ($https): ?><meta property="og:image:secure_url" content="<?php echo ogesc($image); ?>">
 <?php endif; ?>
+<?php if ($imgType !== ''): ?><meta property="og:image:type" content="<?php echo ogesc($imgType); ?>">
+<?php endif; ?>
+<?php if ($imgW > 0): ?><meta property="og:image:width" content="<?php echo $imgW; ?>">
+<meta property="og:image:height" content="<?php echo $imgH; ?>">
+<?php endif; ?>
+<meta property="og:image:alt" content="<?php echo ogesc($title); ?>">
+<?php endif; ?>
+<meta property="og:locale" content="bn_BD">
 
 <meta name="twitter:card" content="<?php echo $image !== '' ? 'summary_large_image' : 'summary'; ?>">
 <meta name="twitter:title" content="<?php echo ogesc($title); ?>">
@@ -86,7 +109,7 @@ function ogesc($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;600;700&family=Noto+Serif+Bengali:wght@400;600;700;800&display=swap" media="print" onload="this.media='all'">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;600;700&family=Noto+Serif+Bengali:wght@400;600;700;800&display=swap"></noscript>
-<link rel="stylesheet" href="css/style.css?v=46">
+<link rel="stylesheet" href="css/style.css?v=48">
 </head>
 <body>
 
@@ -113,10 +136,10 @@ function ogesc($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
 <div id="siteFooter"></div>
 
-<script src="js/data.js?v=47"></script>
-<script src="js/geo.js?v=47"></script>
-<script src="js/store.js?v=47"></script>
-<script src="js/main.js?v=47"></script>
-<script src="js/article.js?v=47"></script>
+<script src="js/data.js?v=49"></script>
+<script src="js/geo.js?v=49"></script>
+<script src="js/store.js?v=49"></script>
+<script src="js/main.js?v=49"></script>
+<script src="js/article.js?v=49"></script>
 </body>
 </html>
