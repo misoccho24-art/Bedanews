@@ -100,6 +100,14 @@ const SHARES = [
   { key: "li", name: "লিংকডইন",    href: `https://www.linkedin.com/sharing/share-offsite/?url=${u}` },
   { key: "mail", name: "ইমেইল",     href: `mailto:?subject=${t}&body=${u}` }
 ];
+/* খবর শেষে "আরও পড়ুন" — অ্যাডমিনে বাছাই করা ২টি খবর (Read More); না থাকলে বা
+   কম পড়লে একই বিভাগের খবর, তারপর সাম্প্রতিক খবর দিয়ে পূরণ */
+const others = POSTS.filter(a => String(a.id) !== String(post.id));
+const chosen = (post.readMore || []).map(rid => others.find(a => String(a.id) === String(rid))).filter(Boolean);
+const sameCat = others.filter(a => a.cat === post.cat && !chosen.includes(a));
+const readMore = [...chosen, ...sameCat, ...others.filter(a => a.cat !== post.cat && !chosen.includes(a))].slice(0, 2);
+const readMoreIds = new Set(readMore.map(a => String(a.id)));
+
 const shareLink = s =>
   `<a class="sh sh--${s.key}${s.messenger ? " js-ms" : ""}" href="${s.href}"${s.key === "mail" || s.messenger ? "" : ' target="_blank" rel="noopener"'} aria-label="${s.name}-এ শেয়ার" title="${s.name}">${ICON[s.key]}</a>`;
 
@@ -136,6 +144,10 @@ document.getElementById("article").innerHTML = `
 
   <div class="story__body">
     <div class="story__text">${bodyHtml}</div>
+    ${readMore.length ? `<aside class="readmore" aria-label="আরও পড়ুন">
+      <span class="readmore__label">আরও পড়ুন</span>
+      ${readMore.map(a => `<a class="readmore__item" href="${link(a)}"${NEWTAB}>${ICON.arrow}<span>${esc(a.title)}</span></a>`).join("")}
+    </aside>` : ""}
   </div>
 
   <footer class="story__end">
@@ -181,12 +193,12 @@ document.getElementById("fontUp").addEventListener("click", () => {
   sizeIdx = Math.min(SIZES.length - 1, sizeIdx + 1); applySize(); safeStore.set("beda-read-size", String(sizeIdx));
 });
 
-/* সম্পর্কিত — একই বিভাগ আগে, কম পড়লে সাম্প্রতিক খবর দিয়ে পূরণ */
-const others = POSTS.filter(a => String(a.id) !== String(post.id));
-let related = inCat(post.cat).filter(a => String(a.id) !== String(post.id)).slice(0, 3);
+/* সম্পর্কিত — একই বিভাগ আগে, কম পড়লে সাম্প্রতিক খবর দিয়ে পূরণ ("আরও পড়ুন"-এর ২টি বাদে) */
+const pool = others.filter(a => !readMoreIds.has(String(a.id)));
+let related = pool.filter(a => a.cat === post.cat).slice(0, 3);
 if (related.length < 3) {
   const have = new Set(related.map(a => String(a.id)));
-  related = related.concat(others.filter(a => !have.has(String(a.id))).slice(0, 3 - related.length));
+  related = related.concat(pool.filter(a => !have.has(String(a.id))).slice(0, 3 - related.length));
 }
 relatedWrap.hidden = !related.length;
 if (related.length) {
@@ -197,7 +209,7 @@ if (related.length) {
 
 /* সর্বশেষ — সময়সহ শিরোনাম, তিন কলামে */
 const relIds = new Set(related.map(a => String(a.id)));
-const latest = others.filter(a => !relIds.has(String(a.id))).slice(0, 6);
+const latest = pool.filter(a => !relIds.has(String(a.id))).slice(0, 6);
 moreWrap.hidden = !latest.length;
 document.getElementById("more").innerHTML = latest.map(brief).join("");
 

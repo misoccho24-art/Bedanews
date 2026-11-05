@@ -23,7 +23,7 @@ if (($id !== '' || $n !== '') && is_file($postFile)) {
         foreach ($list as $p) {
             $match = ($id !== '' && isset($p['id']) && (string)$p['id'] === $id)
                   || ($n !== '' && isset($p['no']) && (string)$p['no'] === $n);
-            if ($match && (!isset($p['status']) || $p['status'] !== 'draft')) {
+            if ($match && (!isset($p['status']) || $p['status'] !== 'draft') && empty($p['trashed'])) {
                 $post = $p;
                 break;
             }
@@ -50,15 +50,20 @@ $title = $post ? $post['title'] : $siteName;
 $desc  = $post ? (!empty($post['excerpt']) ? $post['excerpt'] : $post['title'])
                : 'বেদা নিউজ-এর বিস্তারিত সংবাদ।';
 
-/* শেয়ারের ছবি: খবরের আপলোড করা ছবি; না থাকলে সাইটের শেয়ার-কার্ড (img/share.png)।
-   অটো-জেনারেটেড গ্রেডিয়েন্ট ছবিটি (SVG data URL) ফেসবুক দেখাতে পারে না।
-   ছবির মাপ (width/height) ও ধরন বলে দেওয়া জরুরি — না দিলে ফেসবুক প্রথমবার শেয়ারের
-   সময় ছবি ছাড়াই শুধু লেখা দেখায়, কারণ ছবিটি সে পরে আলাদাভাবে আনে। */
+/* শেয়ারের ছবি — অ্যাডমিনের "Facebook Share Banner" অনুযায়ী:
+     banner = অ্যাডমিনে বানানো ব্যানার (খবরের ছবি + সাইটের নাম), না থাকলে খবরের ছবি
+     photo  = খবরের আপলোড করা ছবি
+     site   = সাইটের শেয়ার-কার্ড (img/share.png)
+   কোনোটি না পেলে সাইটের শেয়ার-কার্ড। অটো-জেনারেটেড গ্রেডিয়েন্ট ছবিটি (SVG data URL)
+   ফেসবুক দেখাতে পারে না। ছবির মাপ (width/height) ও ধরন বলে দেওয়া জরুরি — না দিলে
+   ফেসবুক প্রথমবার শেয়ারের সময় ছবি ছাড়াই শুধু লেখা দেখায়। */
+$upload = function ($f) {
+    return is_string($f) && strpos($f, 'uploads/') === 0 && strpos($f, '..') === false && is_file(__DIR__ . '/' . $f);
+};
+$mode = $post && isset($post['shareMode']) ? $post['shareMode'] : 'photo';
 $imgPath = 'img/share.png';
-if ($post && !empty($post['img']) && strpos($post['img'], 'uploads/') === 0 && strpos($post['img'], '..') === false
-    && is_file(__DIR__ . '/' . $post['img'])) {
-    $imgPath = $post['img'];
-}
+if ($post && $mode === 'banner' && $upload($post['shareImg'] ?? '')) $imgPath = $post['shareImg'];
+elseif ($post && $mode !== 'site' && $upload($post['img'] ?? '')) $imgPath = $post['img'];
 $image = '';
 $imgW = 0; $imgH = 0; $imgType = '';
 if (is_file(__DIR__ . '/' . $imgPath)) {
@@ -109,7 +114,7 @@ function ogesc($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;600;700&family=Noto+Serif+Bengali:wght@400;600;700;800&display=swap" media="print" onload="this.media='all'">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;600;700&family=Noto+Serif+Bengali:wght@400;600;700;800&display=swap"></noscript>
-<link rel="stylesheet" href="css/style.css?v=48">
+<link rel="stylesheet" href="css/style.css?v=56">
 </head>
 <body>
 
@@ -136,10 +141,10 @@ function ogesc($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
 <div id="siteFooter"></div>
 
-<script src="js/data.js?v=49"></script>
-<script src="js/geo.js?v=49"></script>
-<script src="js/store.js?v=49"></script>
-<script src="js/main.js?v=49"></script>
-<script src="js/article.js?v=49"></script>
+<script src="js/data.js?v=54"></script>
+<script src="js/geo.js?v=54"></script>
+<script src="js/store.js?v=54"></script>
+<script src="js/main.js?v=54"></script>
+<script src="js/article.js?v=54"></script>
 </body>
 </html>

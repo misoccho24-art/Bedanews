@@ -25,6 +25,8 @@ const recent = (n = 6) => POSTS.slice(0, n);
    নম্বর না থাকা (লোকাল মোডের) খবরে ?id=... চলে। */
 const HOME  = "index.html";
 const link  = a => a.no ? `article.html?n=${a.no}` : `article.html?id=${a.id}`;
+/* খবরের লিংক নতুন ট্যাবে খোলে (প্রতিবার খোলায় একটি ভিউ গোনা হয় — article.js) */
+const NEWTAB = ' target="_blank" rel="noopener"';
 const topicLink = slug => `category.html?cat=${slug}`;
 
 /* HTML থেকে প্লেইন টেক্সট (সার্চ ও পড়ার সময় হিসাবের জন্য) */
@@ -34,9 +36,28 @@ function plainTextFromHtml(html) {
   return d.textContent || "";
 }
 
-/* সমৃদ্ধ লেখায় শুধু নির্দিষ্ট কিছু ট্যাগ ও লিংক অনুমোদিত — সার্ভারও আলাদাভাবে
-   একই কাজ করে; এটি দ্বিতীয় স্তরের সুরক্ষা এবং লোকাল মোডে একমাত্র সুরক্ষা। */
-const RICH_ALLOWED_TAGS = new Set(["P", "BR", "B", "STRONG", "I", "EM", "U", "UL", "OL", "LI", "A", "BLOCKQUOTE", "MARK", "H3"]);
+/* সমৃদ্ধ লেখায় শুধু নির্দিষ্ট কিছু ট্যাগ, অ্যাট্রিবিউট ও স্টাইল অনুমোদিত — সার্ভারও
+   (api/posts.php, preview-server.ps1) একই নিয়মে আলাদাভাবে ছাঁকে; এটি দ্বিতীয় স্তরের
+   সুরক্ষা এবং লোকাল মোডে একমাত্র সুরক্ষা।
+   স্টাইল: শুধু লেখার রং, পটভূমির রং, লেখা সাজানো (বাঁ/মাঝ/ডান/দুই পাশ) ও ইনডেন্ট।
+   ছবি: uploads/ বা https:// (লোকাল মোডে data:image)। ভিডিও: শুধু YouTube/Facebook এমবেড। */
+const RICH_ALLOWED_TAGS = new Set(["P", "BR", "B", "STRONG", "I", "EM", "U", "S", "STRIKE", "SUB", "SUP", "CODE", "PRE",
+  "UL", "OL", "LI", "A", "BLOCKQUOTE", "MARK", "H2", "H3", "H4", "HR", "SPAN", "DIV",
+  "IMG", "IFRAME", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD"]);
+const RICH_DROP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "OBJECT", "EMBED", "SVG", "MATH", "FORM", "INPUT", "BUTTON", "SELECT", "TEXTAREA"]);
+const RICH_SAFE_IMG = /^(uploads\/[\w.-]+|https:\/\/[^\s"'<>]+|data:image\/(png|jpeg|gif|webp);base64,[a-z0-9+/=]+)$/i;
+const RICH_SAFE_VIDEO = /^https:\/\/(www\.youtube(-nocookie)?\.com\/embed\/[\w-]{11}|www\.facebook\.com\/plugins\/video\.php\?[^\s"'<>]+)$/i;
+function richStyle(s) {
+  return String(s || "").split(";").map(d => {
+    const i = d.indexOf(":");
+    if (i < 0) return "";
+    const prop = d.slice(0, i).trim().toLowerCase(), val = d.slice(i + 1).trim();
+    if ((prop === "color" || prop === "background-color") && /^(#[0-9a-f]{3,8}|rgba?\(\s*[\d.\s,%]+\)|[a-z]{3,20})$/i.test(val)) return `${prop}: ${val}`;
+    if (prop === "text-align" && /^(left|right|center|justify)$/i.test(val)) return `${prop}: ${val.toLowerCase()}`;
+    if ((prop === "padding-left" || prop === "margin-left") && /^\d{1,3}(px|em)$/.test(val)) return `${prop}: ${val}`;
+    return "";
+  }).filter(Boolean).join("; ");
+}
 function sanitizeRichHtml(html) {
   const root = document.createElement("div");
   root.innerHTML = String(html || "");
@@ -44,23 +65,34 @@ function sanitizeRichHtml(html) {
     Array.from(node.childNodes).forEach(child => {
       if (child.nodeType === 1) {
         const tag = child.tagName;
+        if (RICH_DROP_TAGS.has(tag)) { node.removeChild(child); return; }
+        walk(child);
         if (!RICH_ALLOWED_TAGS.has(tag)) {
           while (child.firstChild) node.insertBefore(child.firstChild, child);
           node.removeChild(child);
           return;
         }
-        let safeHref = null;
-        if (tag === "A") {
-          const href = (child.getAttribute("href") || "").trim();
-          if (/^(https?:|mailto:)/i.test(href)) safeHref = href;
+        const get = n => (child.getAttribute(n) || "").trim();
+        const keep = {};
+        const style = richStyle(get("style"));
+        if (style && tag !== "IMG" && tag !== "IFRAME") keep.style = style;
+        if (tag === "A" && /^(https?:|mailto:)/i.test(get("href"))) {
+          Object.assign(keep, { href: get("href"), target: "_blank", rel: "noopener noreferrer" });
+        }
+        if (tag === "IMG") {
+          if (!RICH_SAFE_IMG.test(get("src"))) { node.removeChild(child); return; }
+          Object.assign(keep, { src: get("src"), alt: get("alt").slice(0, 200), loading: "lazy" });
+        }
+        if (tag === "IFRAME") {
+          if (!RICH_SAFE_VIDEO.test(get("src"))) { node.removeChild(child); return; }
+          Object.assign(keep, { src: get("src"), allowfullscreen: "", loading: "lazy", frameborder: "0",
+            allow: "accelerometer; encrypted-media; gyroscope; picture-in-picture" });
+        }
+        if ((tag === "TD" || tag === "TH")) {
+          ["colspan", "rowspan"].forEach(n => { if (/^\d{1,2}$/.test(get(n))) keep[n] = get(n); });
         }
         Array.from(child.attributes).forEach(at => child.removeAttribute(at.name));
-        if (tag === "A" && safeHref) {
-          child.setAttribute("href", safeHref);
-          child.setAttribute("target", "_blank");
-          child.setAttribute("rel", "noopener noreferrer");
-        }
-        walk(child);
+        Object.entries(keep).forEach(([k, v]) => child.setAttribute(k, v));
       } else if (child.nodeType !== 3) {
         node.removeChild(child);
       }
@@ -418,7 +450,7 @@ const kickFor = a => `<div class="st__kick">${kickTags(a)}</div>`;
 
 /* ছবির ওপর কোনো লেখা/ট্যাগ বসে না — এক্সক্লুসিভ চিহ্ন শিরোনামের ওপরের ট্যাগেই থাকে */
 const imgBlock = (a, eager) =>
-  `<a class="st__img" href="${link(a)}" tabindex="-1" aria-hidden="true"><img src="${imgFor(a)}" alt="" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async"></a>`;
+  `<a class="st__img" href="${link(a)}"${NEWTAB} tabindex="-1" aria-hidden="true"><img src="${imgFor(a)}" alt="" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async"></a>`;
 
 /* পড়ার সংখ্যা — সব ডিভাইস মিলিয়ে মোট কতবার খোলা হয়েছে */
 const viewsText = n => `${bnNum(n || 0)} ভিউ`;
@@ -432,7 +464,7 @@ function story(a, { size = "md", img = true, dek = false, eager = false, center 
   return `<article class="st st--${size}${center ? " st--center" : ""} ${cls}">
     ${img ? imgBlock(a, eager) : ""}
     ${kickFor(a)}
-    <h3 class="st__h"><a href="${link(a)}">${esc(a.title)}</a></h3>
+    <h3 class="st__h"><a href="${link(a)}"${NEWTAB}>${esc(a.title)}</a></h3>
     ${dek && a.excerpt ? `<p class="st__dek">${esc(a.excerpt)}</p>` : ""}
     ${metaFor(a, size !== "sm")}
   </article>`;
@@ -444,15 +476,50 @@ function feature(a, eager = false) {
     ${imgBlock(a, eager)}
     <div class="ft__text">
       ${kickFor(a)}
-      <h3 class="st__h" style="font-size:clamp(1.4rem,2.4vw,1.95rem);font-weight:800;line-height:1.25"><a href="${link(a)}">${esc(a.title)}</a></h3>
+      <h3 class="st__h" style="font-size:clamp(1.4rem,2.4vw,1.95rem);font-weight:800;line-height:1.25"><a href="${link(a)}"${NEWTAB}>${esc(a.title)}</a></h3>
       ${a.excerpt ? `<p class="st__dek">${esc(a.excerpt)}</p>` : ""}
       ${metaFor(a)}
     </div>
   </article>`;
 }
 
+/* প্রচ্ছদের ওপরের খবরের জায়গা: ১ = বড় প্রধান খবর, ২–৫ = পাশের চারটি, ৬–৯ = নিচের সারি।
+   অ্যাডমিনে "Is Lead?" দিয়ে যে খবরকে যে নম্বরে বসানো হয় সেটি সেখানেই থাকে; একই নম্বরে
+   দুটি হলে যেটি সবশেষে এডিট/পোস্ট হয়েছে সেটি সেখানে, অন্যটি পরের খালি জায়গায়।
+   বাকি জায়গাগুলো নতুন খবর দিয়ে (নতুনটা আগে) পূরণ হয়। */
+const LEAD_SLOTS = 9;
+const leadPosOf = p => p.isLead ? Math.min(LEAD_SLOTS, Math.max(1, parseInt(p.leadPos, 10) || 1)) : 0;
+function topNews(posts) {
+  const slots = new Array(LEAD_SLOTS).fill(null);
+  const touched = p => p.updatedAt || p.createdAt || 0;
+  posts.filter(leadPosOf)
+    .sort((a, b) => leadPosOf(a) - leadPosOf(b) || touched(b) - touched(a))
+    .forEach(p => {
+      let i = leadPosOf(p) - 1;
+      while (i < LEAD_SLOTS && slots[i]) i++;
+      if (i < LEAD_SLOTS) slots[i] = p;
+    });
+  const placed = new Set(slots.filter(Boolean));
+  const rest = posts.filter(p => !placed.has(p));
+  let k = 0;
+  for (let i = 0; i < LEAD_SLOTS; i++) if (!slots[i]) slots[i] = rest[k++] || null;
+  return slots.filter(Boolean);
+}
+
+/* ছবির ওপর শিরোনাম (প্রচ্ছদের প্রথম সারি) — লেখার পেছনে নিচ থেকে কালো গ্রেডিয়েন্ট,
+   তাই যেকোনো ছবিতেই সাদা লেখা পড়া যায়। ছবির ওপর কোনো ট্যাগ (এক্সক্লুসিভ ইত্যাদি) বসে না।
+   lead = বড় প্রধান খবর। */
+function overCard(a, { lead = false, eager = false } = {}) {
+  return `<article class="ov${lead ? " ov--lead" : ""}"${catAttr(a.cat)}>
+    <a class="ov__link" href="${link(a)}"${NEWTAB}>
+      <img src="${imgFor(a)}" alt="" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">
+      <span class="ov__text"><span class="ov__h">${esc(a.title)}</span></span>
+    </a>
+  </article>`;
+}
+
 /* টেক্সট-শুধু ব্রিফ (সময় + শিরোনাম) */
-const brief = a => `<a class="br" href="${link(a)}"><time>${whenOf(a)}</time><span>${esc(a.title)}</span></a>`;
+const brief = a => `<a class="br" href="${link(a)}"${NEWTAB}><time>${whenOf(a)}</time><span>${esc(a.title)}</span></a>`;
 
 /* আর্কাইভ সারি — বিভাগ/সার্চ পেজের নিচের তালিকা */
 function indexRow(a) {
@@ -462,7 +529,7 @@ function indexRow(a) {
     <div class="ix__when">${d ? `<b>${bnNum(d.getDate())}</b>${months[d.getMonth()]} ${bnNum(d.getFullYear())}` : whenOf(a)}</div>
     <div class="st">
       ${kickFor(a)}
-      <h3 class="st__h"><a href="${link(a)}">${esc(a.title)}</a></h3>
+      <h3 class="st__h"><a href="${link(a)}"${NEWTAB}>${esc(a.title)}</a></h3>
       ${a.excerpt ? `<p class="st__dek">${esc(a.excerpt)}</p>` : ""}
       ${metaFor(a)}
     </div>
@@ -498,7 +565,7 @@ function opinionCard(a) {
     <span class="op__face" aria-hidden="true">${esc(who.charAt(0))}</span>
     <div class="st">
       <div class="op__who">${esc(who)}</div>
-      <h3 class="st__h"><a href="${link(a)}">${esc(a.title)}</a></h3>
+      <h3 class="st__h"><a href="${link(a)}"${NEWTAB}>${esc(a.title)}</a></h3>
       ${a.excerpt ? `<p class="st__dek">${esc(a.excerpt)}</p>` : ""}
     </div>
   </article>`;
@@ -509,7 +576,7 @@ function recentList(list, n = 6, title = "সাম্প্রতিক খব�
   const items = list.slice(0, n);
   if (!items.length) return "";
   return `<span class="label">${title}</span><ol class="rl">${items.map((a, i) => `
-    <li${catAttr(a.cat)}><a class="rl__item" href="${link(a)}">
+    <li${catAttr(a.cat)}><a class="rl__item" href="${link(a)}"${NEWTAB}>
       <span class="rl__num" aria-hidden="true">${bnNum(i + 1)}</span>
       <span><span class="rl__title">${esc(a.title)}</span>
         <span class="rl__meta">${catName(a.cat)} · ${whenOf(a)}${a.views ? ` · ${viewsText(a.views)}` : ""}</span></span>

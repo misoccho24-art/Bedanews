@@ -206,12 +206,33 @@ function Write-Views($h) {
 # পোস্ট কনটেন্টে শুধু নির্দিষ্ট কিছু ট্যাগ অনুমোদিত — বাকি সব সরানো হয়
 # (ভেতরের লেখা থেকে যায়), api/posts.php-এর sanitize_rich()-এর সমমানের
 # হোয়াইটলিস্ট যুক্তি, যাতে লোকাল টেস্ট আসল সার্ভারের আচরণ ঠিকভাবে দেখায়।
+# স্টাইল: শুধু লেখার রং, পটভূমির রং, সাজানো ও ইনডেন্ট (js/main.js-এর richStyle-এর মতো)
+function Rich-Style([string]$s) {
+  $keep = @()
+  foreach ($d in ($s -split ';')) {
+    $i = $d.IndexOf(':'); if ($i -lt 0) { continue }
+    $prop = $d.Substring(0, $i).Trim().ToLower(); $val = $d.Substring($i + 1).Trim()
+    if (($prop -eq 'color' -or $prop -eq 'background-color') -and $val -match '^(#[0-9a-f]{3,8}|rgba?\(\s*[\d.\s,%]+\)|[a-z]{3,20})$') { $keep += "${prop}: $val" }
+    elseif ($prop -eq 'text-align' -and $val -match '^(left|right|center|justify)$') { $keep += "text-align: $($val.ToLower())" }
+    elseif (($prop -eq 'padding-left' -or $prop -eq 'margin-left') -and $val -match '^\d{1,3}(px|em)$') { $keep += "${prop}: $val" }
+  }
+  return ($keep -join '; ')
+}
+function Attr-Of([string]$attrs, [string]$name) {
+  $m = [regex]::Match($attrs, "(?i)(?:^|\s)$name\s*=\s*(?:""([^""]*)""|'([^']*)'|([^\s>]+))")
+  if (-not $m.Success) { return "" }
+  return [System.Net.WebUtility]::HtmlDecode($m.Groups[1].Value + $m.Groups[2].Value + $m.Groups[3].Value).Trim()
+}
+
 function Sanitize-Rich([string]$html) {
   if (-not $html) { return "" }
-  $html = [regex]::Replace($html, '(?is)<(script|style|iframe|object|embed)[^>]*>.*?</\1>', '')
-  $html = [regex]::Replace($html, '(?is)<(script|style|iframe|object|embed)[^>]*/?>', '')
+  $html = [regex]::Replace($html, '(?s)<!--.*?-->', '')
+  $html = [regex]::Replace($html, '(?is)<(script|style|noscript|template|object|embed|svg|math|textarea|select|button)[^>]*>.*?</\1>', '')
+  $html = [regex]::Replace($html, '(?is)<(script|style|noscript|template|object|embed|svg|math)[^>]*/?>', '')
 
-  $allowed = @('p','br','b','strong','i','em','u','ul','ol','li','a','blockquote','mark','h3')
+  $allowed = @('p','br','b','strong','i','em','u','s','strike','sub','sup','code','pre','ul','ol','li','a','blockquote','mark',
+               'h2','h3','h4','hr','span','div','img','iframe','table','thead','tbody','tr','th','td')
+  $enc = { param($v) [System.Net.WebUtility]::HtmlEncode($v) }
   $pattern = [regex]'<(/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>'
   $sb = New-Object System.Text.StringBuilder
   $last = 0
@@ -222,20 +243,28 @@ function Sanitize-Rich([string]$html) {
     $attrs = $m.Groups[3].Value
     if ($allowed -contains $tag) {
       if ($closing) {
-        [void]$sb.Append("</$tag>")
-      } elseif ($tag -eq "a") {
-        $href = ""
-        $hm = [regex]::Match($attrs, 'href\s*=\s*"([^"]*)"')
-        if (-not $hm.Success) { $hm = [regex]::Match($attrs, "href\s*=\s*'([^']*)'") }
-        if ($hm.Success) { $href = $hm.Groups[1].Value.Trim() }
-        if ($href -match '^(https?:|mailto:)') {
-          $safe = [System.Net.WebUtility]::HtmlEncode($href)
-          [void]$sb.Append("<a href=`"$safe`" target=`"_blank`" rel=`"noopener noreferrer`">")
-        } else {
-          [void]$sb.Append("<a>")
-        }
+        if ($tag -ne 'img' -and $tag -ne 'br' -and $tag -ne 'hr') { [void]$sb.Append("</$tag>") }
       } else {
-        [void]$sb.Append("<$tag>")
+        $out = ""
+        $style = Rich-Style (Attr-Of $attrs 'style')
+        if ($style -and $tag -ne 'img' -and $tag -ne 'iframe') { $out += " style=`"$(& $enc $style)`"" }
+        $ok = $true
+        if ($tag -eq 'a') {
+          $href = Attr-Of $attrs 'href'
+          if ($href -match '^(https?:|mailto:)') { $out += " href=`"$(& $enc $href)`" target=`"_blank`" rel=`"noopener noreferrer`"" }
+        } elseif ($tag -eq 'img') {
+          $src = Attr-Of $attrs 'src'
+          $ok = ($src -match '^uploads/[\w.-]+$' -and $src -notmatch '\.\.') -or $src -match '^https://[^\s"''<>]+$'
+          $alt = Attr-Of $attrs 'alt'; if ($alt.Length -gt 200) { $alt = $alt.Substring(0, 200) }
+          $out += " src=`"$(& $enc $src)`" alt=`"$(& $enc $alt)`" loading=`"lazy`""
+        } elseif ($tag -eq 'iframe') {
+          $src = Attr-Of $attrs 'src'
+          $ok = $src -match '^https://(www\.youtube(-nocookie)?\.com/embed/[\w-]{11}|www\.facebook\.com/plugins/video\.php\?[^\s"''<>]+)$'
+          $out += " src=`"$(& $enc $src)`" allowfullscreen=`"`" loading=`"lazy`" frameborder=`"0`" allow=`"accelerometer; encrypted-media; gyroscope; picture-in-picture`""
+        } elseif ($tag -eq 'td' -or $tag -eq 'th') {
+          foreach ($n in 'colspan', 'rowspan') { $v = Attr-Of $attrs $n; if ($v -match '^\d{1,2}$') { $out += " $n=`"$v`"" } }
+        }
+        if ($ok) { [void]$sb.Append("<$tag$out>") }
       }
     }
     # অনুমোদিত না হলে ট্যাগ বাদ যায়, ভেতরের লেখা এমনিতেই টেক্সটে থেকে যায়
@@ -260,6 +289,24 @@ while ($listener.IsListening) {
     $ctx = $listener.GetContext()
     $path = [System.Uri]::UnescapeDataString($ctx.Request.Url.AbsolutePath).TrimStart('/')
 
+    # ---------------- RSS ফিড (rss.php-এর সংক্ষিপ্ত রূপ — লোকাল পরীক্ষার জন্য) ----------------
+    if ($path -eq "rss.php" -or $path -eq "rss" -or $path -eq "feed") {
+      $origin = "http://" + $ctx.Request.Url.Authority
+      $x = { param($s) [System.Security.SecurityElement]::Escape("" + $s) }
+      $items = @(Read-Posts | Where-Object { $_.status -ne "draft" -and -not $_.trashed -and ($null -eq $_.rss -or $_.rss) } |
+                 Sort-Object { [int64]$_.createdAt } -Descending | Select-Object -First 30)
+      $sb = New-Object System.Text.StringBuilder
+      [void]$sb.Append("<?xml version=`"1.0`" encoding=`"UTF-8`"?>`n<rss version=`"2.0`"><channel><title>বেদা নিউজ</title><link>$origin/</link><description>দেশ ও বিশ্বের সর্বশেষ খবর।</description><language>bn</language>`n")
+      foreach ($p in $items) {
+        $url = if ($null -ne $p.no) { "$origin/article.html?n=$($p.no)" } else { "$origin/article.html?id=$($p.id)" }
+        $date = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$p.createdAt).ToString("r")
+        [void]$sb.Append("<item><title>$(& $x $p.title)</title><link>$url</link><guid isPermaLink=`"true`">$url</guid><pubDate>$date</pubDate><description>$(& $x $p.excerpt)</description></item>`n")
+      }
+      [void]$sb.Append("</channel></rss>")
+      Send-Bytes $ctx ([System.Text.Encoding]::UTF8.GetBytes($sb.ToString())) "application/rss+xml; charset=utf-8" 200
+      $ctx.Response.Close(); continue
+    }
+
     # ---------------- API ----------------
     if ($path -eq "api/posts.php") {
 
@@ -283,7 +330,7 @@ while ($listener.IsListening) {
           Write-Posts $all
         }
         if (-not $authed) {
-          $all = @($all | Where-Object { $_.status -ne "draft" })
+          $all = @($all | Where-Object { $_.status -ne "draft" -and -not $_.trashed })
         }
         # প্রতিটি খবরের সঙ্গে পড়ার সংখ্যা (শুধু পাঠানোর সময়)
         $views = Read-Views
@@ -327,7 +374,7 @@ while ($listener.IsListening) {
       # ---- খবর পড়া হলো: পড়ার সংখ্যা ১ বাড়ানো (লগইন লাগে না) ----
       if ($body.action -eq "view") {
         $vid = [string]$body.id
-        $post = @(Read-Posts) | Where-Object { [string]$_.id -eq $vid -and $_.status -ne "draft" } | Select-Object -First 1
+        $post = @(Read-Posts) | Where-Object { [string]$_.id -eq $vid -and $_.status -ne "draft" -and -not $_.trashed } | Select-Object -First 1
         if ($vid -notmatch '^[A-Za-z0-9_-]{1,40}$' -or -not $post) {
           Send-Json $ctx @{ ok = $false; error = "খবরটি পাওয়া যায়নি।" } 404
         } else {
@@ -343,6 +390,14 @@ while ($listener.IsListening) {
       # ---- এর পরের সব কাজে টোকেন লাগবে ----
       if ([string]::IsNullOrEmpty([string]$body.token) -or -not $script:Tokens.Contains([string]$body.token)) {
         Send-Json $ctx @{ ok = $false; error = "আবার লগইন করুন।" } 401
+        $ctx.Response.Close(); continue
+      }
+
+      # ---- এডিটরে বসানো ছবি আপলোড ----
+      if ($body.action -eq "upload") {
+        $name = "$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())-$(Get-Random -Minimum 100 -Maximum 999).jpg"
+        $url = Save-Upload ("" + $body.img) $name
+        if ($url) { Send-Json $ctx @{ ok = $true; url = $url } } else { Send-Json $ctx @{ ok = $false; error = "ছবিটি সংরক্ষণ করা যায়নি।" } 400 }
         $ctx.Response.Close(); continue
       }
 
@@ -379,6 +434,12 @@ while ($listener.IsListening) {
           }
         }
 
+        $shareMode = if (@('banner', 'photo', 'site') -contains ("" + $p.shareMode)) { "" + $p.shareMode } else { "photo" }
+        $shareImg = ""
+        if ($shareMode -eq "banner" -and ("" + $p.shareImg).StartsWith("data:image/")) {
+          $shareImg = Save-Upload ("" + $p.shareImg) "$id-share.jpg"; if (-not $shareImg) { $shareImg = "" }
+        }
+
         $excerpt = if ($p.excerpt) { "" + $p.excerpt } elseif ($paras.Count -gt 0) { $paras[0] } else { $plainCheck }
         $readMin = 1
         if ($p.read) { $readMin = [int]$p.read }
@@ -401,7 +462,13 @@ while ($listener.IsListening) {
           district    = "" + $p.district
           upazila     = "" + $p.upazila
           isLead      = [bool]$p.isLead
+          leadPos     = $(if ([bool]$p.isLead) { [Math]::Max(1, [Math]::Min(9, [int]("0" + $p.leadPos))) } else { 0 })
+          breaking    = [bool]$p.breaking
+          readMore    = @(@($p.readMore) | Where-Object { ("" + $_) -match '^[A-Za-z0-9_-]{1,40}$' } | Select-Object -Unique -First 2 | ForEach-Object { "" + $_ })
           exclusive   = [bool]$p.exclusive
+          rss         = $(if ($null -eq $p.rss) { $true } else { [bool]$p.rss })
+          shareMode   = $shareMode
+          shareImg    = $shareImg
           status      = $status
           read        = [Math]::Max(1, $readMin)
           createdAt   = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
@@ -474,6 +541,23 @@ while ($listener.IsListening) {
           $img = ""
         }
 
+        # শেয়ারের ব্যানার: নতুন এলে পুরোনোটি মুছে নতুনটি; ব্যানার বাদ দিলে মুছে যায়
+        $shareMode = if (@('banner', 'photo', 'site') -contains ("" + $p.shareMode)) { "" + $p.shareMode } else { "photo" }
+        $shareImg = "" + $old.shareImg
+        $rawShare = "" + $p.shareImg
+        $dropShare = {
+          if ($shareImg.StartsWith("uploads/")) {
+            $f = Join-Path $Root ($shareImg -replace '/', '\'); if (Test-Path $f) { Remove-Item -Force $f -ErrorAction SilentlyContinue }
+          }
+        }
+        if ($shareMode -eq "banner" -and $rawShare.StartsWith("data:image/")) {
+          & $dropShare
+          $shareImg = Save-Upload $rawShare "$id-share-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()).jpg"; if (-not $shareImg) { $shareImg = "" }
+        } elseif ($shareMode -ne "banner" -or ($null -ne $p.shareImg -and -not $rawShare)) {
+          & $dropShare
+          $shareImg = ""
+        }
+
         $excerpt = if ($p.excerpt) { "" + $p.excerpt } elseif ($paras.Count -gt 0) { $paras[0] } else { $plainCheck }
         $readMin = 1
         if ($p.read) { $readMin = [int]$p.read }
@@ -496,7 +580,13 @@ while ($listener.IsListening) {
           district    = "" + $p.district
           upazila     = "" + $p.upazila
           isLead      = [bool]$p.isLead
+          leadPos     = $(if ([bool]$p.isLead) { [Math]::Max(1, [Math]::Min(9, [int]("0" + $p.leadPos))) } else { 0 })
+          breaking    = [bool]$p.breaking
+          readMore    = @(@($p.readMore) | Where-Object { ("" + $_) -match '^[A-Za-z0-9_-]{1,40}$' } | Select-Object -Unique -First 2 | ForEach-Object { "" + $_ })
           exclusive   = [bool]$p.exclusive
+          rss         = $(if ($null -eq $p.rss) { $true } else { [bool]$p.rss })
+          shareMode   = $shareMode
+          shareImg    = $shareImg
           status      = $status
           read        = [Math]::Max(1, $readMin)
           createdAt   = $old.createdAt
@@ -532,6 +622,22 @@ while ($listener.IsListening) {
         $ctx.Response.Close(); continue
       }
 
+      # ---- ট্র্যাশে পাঠানো / ফেরানো (api/posts.php-এর মতো) ----
+      if ($body.action -eq "trash" -or $body.action -eq "restore") {
+        $id = "" + $body.id
+        $all = @(Read-Posts)
+        $hit = $all | Where-Object { ("" + $_.id) -eq $id } | Select-Object -First 1
+        if (-not $hit) { Send-Json $ctx @{ ok = $false; error = "খবরটি পাওয়া যায়নি।" } 404; $ctx.Response.Close(); continue }
+        if ($body.action -eq "trash") {
+          $hit | Add-Member -NotePropertyName trashed -NotePropertyValue ([int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())) -Force
+        } else {
+          $hit.PSObject.Properties.Remove("trashed")
+        }
+        Write-Posts $all
+        Send-Json $ctx @{ ok = $true }
+        $ctx.Response.Close(); continue
+      }
+
       # ---- পোস্ট মুছে ফেলা ----
       if ($body.action -eq "delete") {
         $id = "" + $body.id
@@ -542,9 +648,14 @@ while ($listener.IsListening) {
           $ctx.Response.Close(); continue
         }
         $kept = @($all | Where-Object { ("" + $_.id) -ne $id })
-        if ($gone.img -and ("" + $gone.img).StartsWith("uploads/")) {
-          $f = Join-Path $Root ($gone.img -replace '/', '\')
-          if (Test-Path $f) { Remove-Item -Force $f -ErrorAction SilentlyContinue }
+        # ছবি, শেয়ারের ব্যানার ও লেখার ভেতরের আপলোড করা ছবি — সবই মোছে
+        $files = @(("" + $gone.img), ("" + $gone.shareImg))
+        foreach ($cm in [regex]::Matches("" + $gone.content, 'src="(uploads/[\w.-]+)"')) { $files += $cm.Groups[1].Value }
+        foreach ($rel in $files) {
+          if ($rel.StartsWith("uploads/") -and $rel -notmatch '\.\.') {
+            $f = Join-Path $Root ($rel -replace '/', '\')
+            if (Test-Path $f) { Remove-Item -Force $f -ErrorAction SilentlyContinue }
+          }
         }
         Write-Posts $kept
         Send-Json $ctx @{ ok = $true }

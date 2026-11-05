@@ -59,16 +59,22 @@ const show = (id, on) => { const el = document.getElementById(id); if (el) el.hi
   form.addEventListener("submit", e => { e.preventDefault(); if (lfDivision.value) go(); });
 })();
 
-/* ---------- সর্বশেষ শিরোনাম — একটি করে ওপরে সরে আসে, আগে/পরে বোতামসহ ---- */
+/* ---------- সর্বশেষ শিরোনাম — একটি করে ওপরে সরে আসে, আগে/পরে বোতামসহ ----
+   অ্যাডমিনে "Breaking News" দেওয়া খবর থাকলে শুধু সেগুলো (সর্বোচ্চ ১০টি),
+   নাম হয় "ব্রেকিং নিউজ"; না থাকলে সাম্প্রতিক ৫টি, নাম "সর্বশেষ"। */
 let flashTimer = null;
 function flash() {
   clearInterval(flashTimer);
   const view = document.getElementById("flashView");
-  const heads = POSTS.slice(0, 5);
+  const breaking = POSTS.filter(p => p.breaking).slice(0, 10);
+  const heads = breaking.length ? breaking : POSTS.slice(0, 5);
   show("flashWrap", heads.length > 0);
   if (!heads.length) return;
+  const wrap = document.getElementById("flashWrap");
+  wrap.classList.toggle("is-breaking", breaking.length > 0);
+  $(".flash__label .label", wrap).textContent = breaking.length ? "ব্রেকিং নিউজ" : "সর্বশেষ";
   view.innerHTML = heads.map((p, i) =>
-    `<a class="flash__item${i === 0 ? " is-on" : ""}" href="${link(p)}"${i ? ' tabindex="-1"' : ""}>${esc(p.title)}</a>`).join("");
+    `<a class="flash__item${i === 0 ? " is-on" : ""}" href="${link(p)}"${NEWTAB}${i ? ' tabindex="-1"' : ""}>${esc(p.title)}</a>`).join("");
   const items = Array.from(view.children);
   const count = document.getElementById("flashCount");
   let i = 0;
@@ -107,16 +113,20 @@ function render() {
   }
 
   /* ---------- প্রথম পাতা --------------------------------------------
-     বাঁয়ে সাম্প্রতিক ৪টি খবর (২×২); ডানে "সর্বশেষ" ১–৫ নম্বরের তালিকা।
-     "প্রধান খবর" চিহ্নিত পোস্ট আগে, তারপর নতুনগুলো দিয়ে ৪টি পূরণ।        */
-  const marked = POSTS.filter(p => p.isLead);
-  const rest = POSTS.filter(p => !p.isLead);
-  const leads = [...marked, ...rest].slice(0, 4);
-  const heroIds = new Set(leads.map(p => String(p.id)));
+     ওপরে: বাঁয়ে বড় প্রধান খবর (১ নম্বর), ডানে ২×২ চারটি (২–৫) — ছবির ওপর শিরোনাম।
+     তার নিচে: পরের ৪টি খবর (৬–৯) আর ডানে "সর্বশেষ" ১–৫ নম্বরের তালিকা।
+     কোন খবর কোন নম্বরে: অ্যাডমিনে "Is Lead?" দিয়ে বসানো নম্বর, বাকিগুলো নতুন খবর
+     দিয়ে — topNews() (main.js)।                                              */
+  const [lead, ...rest] = topNews(POSTS);
+  const top4 = rest.slice(0, 4), next4 = rest.slice(4, 8);
+  const heroIds = new Set([lead, ...top4].map(p => String(p.id)));
 
   document.getElementById("front").innerHTML = `
-    <div class="front__grid">${leads.map((a, i) => story(a, { size: "md", eager: i < 2 })).join("")}</div>
-    <aside class="front__latest">${recentList(POSTS, 5, "সর্বশেষ")}</aside>`;
+    <div class="hero">${overCard(lead, { lead: true, eager: true })}${top4.map((a, i) => overCard(a, { eager: i < 2 })).join("")}</div>
+    <div class="front__more">
+      ${next4.length ? `<div class="front__grid">${next4.map(a => story(a, { size: "md" })).join("")}</div>` : ""}
+      <aside class="front__latest">${recentList(POSTS, 5, "সর্বশেষ")}</aside>
+    </div>`;
 
   document.getElementById("topics").innerHTML = topicsStrip();
 

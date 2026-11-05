@@ -153,7 +153,7 @@ const storeReason = () => STORE_REASON;
    হয় — status:"draft" থাকা পোস্ট এখানে কখনো আসে না।                   */
 function getPosts() {
   return [...CACHE, ...ARTICLES]
-    .filter(p => p.status !== "draft")
+    .filter(p => p.status !== "draft" && !p.trashed)
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
@@ -223,6 +223,34 @@ async function removePost(id) {
   saveLocal(list);
   CACHE = list;
 }
+
+/* এডিটরে বসানো ছবি — সার্ভারে uploads/-এ সেভ হয়ে ঠিকানা ফেরত আসে (খবরের তালিকায়
+   বড় data URL জমে না); লোকাল মোডে ছবিটি data URL হিসেবেই থাকে */
+async function uploadImage(dataUrl) {
+  if (STORE_MODE !== "server") return dataUrl;
+  const data = await apiSend({ action: "upload", token: safeStore.get(TOKEN_KEY), img: dataUrl });
+  return data.url;
+}
+
+/* ট্র্যাশে পাঠানো / ফেরানো — ট্র্যাশের খবর সাইটে দেখায় না, ছবিসহ সব থেকে যায় */
+async function setTrashed(id, on) {
+  if (STORE_MODE === "server") {
+    await apiSend({ action: on ? "trash" : "restore", token: safeStore.get(TOKEN_KEY), id: String(id) });
+    const p = ADMIN_CACHE.find(x => String(x.id) === String(id));
+    if (p) { if (on) p.trashed = Date.now(); else delete p.trashed; }
+    CACHE = CACHE.filter(x => String(x.id) !== String(id));
+    if (!on && p && p.status !== "draft") CACHE.unshift(p);
+    writeSaved();
+    return;
+  }
+  const list = loadLocal();
+  const p = list.find(x => String(x.id) === String(id));
+  if (p) { if (on) p.trashed = Date.now(); else delete p.trashed; }
+  saveLocal(list);
+  CACHE = list;
+}
+const trashPost = id => setTrashed(id, true);
+const restorePost = id => setTrashed(id, false);
 
 /* খসড়া (draft) থেকে প্রকাশিত করা */
 async function publishPost(id) {

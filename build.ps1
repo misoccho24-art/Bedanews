@@ -62,7 +62,7 @@ foreach ($f in $shells) {
 }
 
 # ---- other files that belong on the server ----
-$copy = '.htaccess', 'admin\index.html', 'api\posts.php', 'data\.htaccess', 'data\README.txt', 'uploads\README.txt', 'img\share.png'
+$copy = '.htaccess', 'admin\index.html', 'api\posts.php', 'data\.htaccess', 'data\README.txt', 'uploads\README.txt', 'img\share.png', 'rss.php'
 foreach ($f in $copy) {
   $src = Join-Path $root $f
   if (Test-Path $src) {

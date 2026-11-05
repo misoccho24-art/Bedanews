@@ -64,6 +64,35 @@ function parse_video($url) {
     fail('শুধু YouTube বা Facebook ভিডিওর লিংক দেওয়া যাবে।');
 }
 
+/* ফেসবুক শেয়ারের ছবি কোনটি: "banner" = অ্যাডমিনে বানানো ব্যানার (খবরের ছবি + সাইটের নাম),
+   "photo" = শুধু খবরের ছবি, "site" = সাইটের শেয়ার-কার্ড (img/share.png) */
+function share_mode($p) {
+    $m = isset($p['shareMode']) ? (string)$p['shareMode'] : '';
+    return in_array($m, ['banner', 'photo', 'site'], true) ? $m : 'photo';
+}
+
+/* "Is Lead?" দেওয়া খবর প্রচ্ছদের ওপরের কত নম্বরে বসবে: ১–৯ (না দিলে ০) — js/main.js-এর topNews() */
+function lead_pos($p) {
+    if (empty($p['isLead'])) return 0;
+    return max(1, min(9, (int)(isset($p['leadPos']) ? $p['leadPos'] : 1)));
+}
+
+/* "আরও পড়ুন"-এর জন্য বাছাই করা খবরের id — সর্বোচ্চ ২টি */
+function read_more_ids($p) {
+    $out = [];
+    foreach ((isset($p['readMore']) && is_array($p['readMore'])) ? $p['readMore'] : [] as $rid) {
+        $rid = (string)$rid;
+        if (preg_match('/^[A-Za-z0-9_-]{1,40}$/', $rid) && !in_array($rid, $out, true)) $out[] = $rid;
+        if (count($out) >= 2) break;
+    }
+    return $out;
+}
+
+/* খবরের লেখার ভেতরের আপলোড করা ছবিগুলো (এডিটরে বসানো) — খবর মুছলে এগুলোও মোছে */
+function content_uploads($html) {
+    return preg_match_all('#src="(uploads/[\w.-]+)"#', (string)$html, $m) ? $m[1] : [];
+}
+
 /* গ্যালারির ফাইল থেকে ছবিগুলো মুছে ফেলা — শুধু uploads/-এর ভেতরের */
 function remove_uploads($paths) {
     global $base;
@@ -156,13 +185,94 @@ function clean($v, $max = 400) {
     return substr($v, 0, $max);
 }
 
-/* পোস্ট কনটেন্টে (rich text) শুধু নির্দিষ্ট কিছু ট্যাগ অনুমোদিত।
-   বাকি সব ট্যাগ সরানো হয় (ভেতরের লেখা থেকে যায়), <a>-তে শুধু নিরাপদ
-   http/https/mailto লিংক রাখা হয়, অন্য কোনো অ্যাট্রিবিউট রাখা হয় না।    */
+/* পোস্ট কনটেন্টে (rich text) শুধু নির্দিষ্ট কিছু ট্যাগ, অ্যাট্রিবিউট ও স্টাইল অনুমোদিত —
+   js/main.js-এর sanitizeRichHtml()-এর একই নিয়ম। অন্য ট্যাগ সরে যায় (ভেতরের লেখা থাকে),
+   script/style ইত্যাদি ভেতরসহ বাদ। স্টাইল: শুধু লেখার রং, পটভূমির রং, সাজানো ও ইনডেন্ট।
+   ছবি: শুধু uploads/ বা https://। ভিডিও: শুধু YouTube/Facebook এমবেড।
+   PHP-তে DOM এক্সটেনশন না থাকলে পুরোনো সরল নিয়মে (শুধু লেখার ট্যাগ) চলে।          */
+function rich_style($s) {
+    $keep = [];
+    foreach (explode(';', (string)$s) as $decl) {
+        $parts = explode(':', $decl, 2);
+        if (count($parts) < 2) continue;
+        $prop = strtolower(trim($parts[0]));
+        $val  = trim($parts[1]);
+        if (($prop === 'color' || $prop === 'background-color') && preg_match('/^(#[0-9a-f]{3,8}|rgba?\(\s*[\d.\s,%]+\)|[a-z]{3,20})$/i', $val)) $keep[] = "$prop: $val";
+        elseif ($prop === 'text-align' && preg_match('/^(left|right|center|justify)$/i', $val)) $keep[] = 'text-align: ' . strtolower($val);
+        elseif (($prop === 'padding-left' || $prop === 'margin-left') && preg_match('/^\d{1,3}(px|em)$/', $val)) $keep[] = "$prop: $val";
+    }
+    return implode('; ', $keep);
+}
+
+function rich_walk($node) {
+    static $allowed = ['p','br','b','strong','i','em','u','s','strike','sub','sup','code','pre','ul','ol','li','a','blockquote','mark',
+                       'h2','h3','h4','hr','span','div','img','iframe','table','thead','tbody','tr','th','td'];
+    static $drop = ['script','style','noscript','template','object','embed','svg','math','form','input','button','select','textarea','link','meta'];
+    foreach (iterator_to_array($node->childNodes) as $child) {
+        if ($child->nodeType === XML_ELEMENT_NODE) {
+            $tag = strtolower($child->nodeName);
+            if (in_array($tag, $drop, true)) { $node->removeChild($child); continue; }
+            rich_walk($child);
+            if (!in_array($tag, $allowed, true)) {
+                while ($child->firstChild) $node->insertBefore($child->firstChild, $child);
+                $node->removeChild($child);
+                continue;
+            }
+            $get = function ($n) use ($child) { return trim((string)$child->getAttribute($n)); };
+            $keep = [];
+            $style = rich_style($get('style'));
+            if ($style !== '' && $tag !== 'img' && $tag !== 'iframe') $keep['style'] = $style;
+            if ($tag === 'a' && preg_match('#^(https?:|mailto:)#i', $get('href'))) {
+                $keep += ['href' => $get('href'), 'target' => '_blank', 'rel' => 'noopener noreferrer'];
+            }
+            if ($tag === 'img') {
+                $src = $get('src');
+                $ok = (preg_match('#^uploads/[\w.-]+$#', $src) && strpos($src, '..') === false) || preg_match('#^https://[^\s"\'<>]+$#i', $src);
+                if (!$ok) { $node->removeChild($child); continue; }
+                $alt = function_exists('mb_substr') ? mb_substr($get('alt'), 0, 200, 'UTF-8') : substr($get('alt'), 0, 200);
+                $keep += ['src' => $src, 'alt' => $alt, 'loading' => 'lazy'];
+            }
+            if ($tag === 'iframe') {
+                $src = $get('src');
+                if (!preg_match('#^https://(www\.youtube(-nocookie)?\.com/embed/[\w-]{11}|www\.facebook\.com/plugins/video\.php\?[^\s"\'<>]+)$#i', $src)) {
+                    $node->removeChild($child); continue;
+                }
+                $keep += ['src' => $src, 'allowfullscreen' => '', 'loading' => 'lazy', 'frameborder' => '0',
+                          'allow' => 'accelerometer; encrypted-media; gyroscope; picture-in-picture'];
+            }
+            if ($tag === 'td' || $tag === 'th') {
+                foreach (['colspan', 'rowspan'] as $n) { if (preg_match('/^\d{1,2}$/', $get($n))) $keep[$n] = $get($n); }
+            }
+            foreach (iterator_to_array($child->attributes) as $at) $child->removeAttribute($at->nodeName);
+            foreach ($keep as $k => $v) $child->setAttribute($k, $v);
+        } elseif ($child->nodeType !== XML_TEXT_NODE) {
+            $node->removeChild($child);
+        }
+    }
+}
+
 function sanitize_rich($html) {
     $html = (string)$html;
+    if (trim($html) === '') return '';
+    if (!class_exists('DOMDocument')) return sanitize_rich_basic($html);
+    $doc = new DOMDocument();
+    $prev = libxml_use_internal_errors(true);
+    $doc->loadHTML('<?xml encoding="UTF-8"><div>' . $html . '</div>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+    libxml_use_internal_errors($prev);
+    $root = $doc->getElementsByTagName('div')->item(0);
+    if (!$root) return '';
+    rich_walk($root);
+    $out = '';
+    foreach (iterator_to_array($root->childNodes) as $c) $out .= $doc->saveHTML($c);
+    return $out;
+}
+
+/* পুরোনো সরল নিয়ম — শুধু লেখার ট্যাগ, <a>-তে নিরাপদ লিংক; অন্য অ্যাট্রিবিউট থাকে না */
+function sanitize_rich_basic($html) {
+    $html = (string)$html;
     if ($html === '') return '';
-    $allowed = '<p><br><b><strong><i><em><u><ul><ol><li><a><blockquote><mark><h3>';
+    $allowed = '<p><br><b><strong><i><em><u><s><sub><sup><ul><ol><li><a><blockquote><mark><h2><h3><h4><hr><table><thead><tbody><tr><th><td>';
     $html = strip_tags($html, $allowed);
     $html = preg_replace_callback('/<(\/?)(\w+)([^>]*)>/i', function ($m) {
         $closing = $m[1] !== '';
@@ -216,7 +326,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $qToken = isset($_GET['token']) ? (string)$_GET['token'] : '';
     if (!checkAuth($tokFile, $qToken)) {
         $posts = array_values(array_filter($posts, function ($p) {
-            return !isset($p['status']) || $p['status'] !== 'draft';
+            return (!isset($p['status']) || $p['status'] !== 'draft') && empty($p['trashed']);   // ড্রাফট ও ট্র্যাশের খবর বাদ
         }));
     }
     /* প্রতিটি খবরের সঙ্গে কতবার পড়া হয়েছে তা জুড়ে দেওয়া (শুধু পাঠানোর সময়, সংরক্ষণ হয় না) */
@@ -277,7 +387,7 @@ if ($action === 'view') {
     if (!preg_match('/^[A-Za-z0-9_-]{1,40}$/', $id)) fail('খবরটি চেনা যায়নি।');
     $exists = false;
     foreach (readPosts($postFile) as $q) {
-        if ((string)$q['id'] === $id && (!isset($q['status']) || $q['status'] !== 'draft')) { $exists = true; break; }
+        if ((string)$q['id'] === $id && (!isset($q['status']) || $q['status'] !== 'draft') && empty($q['trashed'])) { $exists = true; break; }
     }
     if (!$exists) fail('খবরটি পাওয়া যায়নি।', 404);
     if (!ensureDir($dataDir)) fail('data ফোল্ডারে লেখার অনুমতি নেই।', 500);
@@ -300,6 +410,12 @@ if ($action === 'view') {
 /* এর পরের সব কাজে লগইন লাগবে */
 $token = isset($body['token']) ? (string)$body['token'] : '';
 if (!checkAuth($tokFile, $token)) fail('আবার লগইন করুন।', 401);
+
+/* ---------- এডিটরে বসানো ছবি আপলোড — ফেরত দেয় "uploads/নাম.jpg" ---------- */
+if ($action === 'upload') {
+    $name = round(microtime(true) * 1000) . '-' . random_int(100, 999) . '.jpg';
+    out(['ok' => true, 'url' => save_upload(isset($body['img']) ? $body['img'] : '', $name)]);
+}
 
 /* ---------- নতুন পোস্ট -------------------------------------------------- */
 if ($action === 'create') {
@@ -347,6 +463,13 @@ if ($action === 'create') {
         $img = 'uploads/' . $name;
     }
 
+    $shareMode = share_mode($p);
+    $shareImg = '';
+    $rawShare = isset($p['shareImg']) ? (string)$p['shareImg'] : '';
+    if ($shareMode === 'banner' && strpos($rawShare, 'data:image/') === 0) {
+        $shareImg = save_upload($rawShare, $id . '-share.jpg');
+    }
+
     $excerptSrc = isset($p['excerpt']) && trim((string)$p['excerpt']) !== ''
         ? $p['excerpt'] : ($bodyArr[0] ?? $plainCheck);
     $excerpt = clean($excerptSrc, 300);
@@ -370,7 +493,13 @@ if ($action === 'create') {
         'district'    => clean(isset($p['district']) ? $p['district'] : '', 60),
         'upazila'     => clean(isset($p['upazila']) ? $p['upazila'] : '', 60),
         'isLead'      => !empty($p['isLead']),
+        'leadPos'     => lead_pos($p),   // প্রচ্ছদের ওপরের খবরে কত নম্বরে (১–৯), ০ = বসানো নেই
+        'breaking'    => !empty($p['breaking']),   // ব্রেকিং নিউজ — প্রচ্ছদের ওপরের চলমান শিরোনামে
+        'readMore'    => read_more_ids($p),        // খবর শেষে "আরও পড়ুন"-এর বাছাই করা ২টি খবর (id)
         'exclusive'   => !empty($p['exclusive']),
+        'rss'         => !array_key_exists('rss', $p) || !empty($p['rss']),   // RSS ফিডে থাকবে কি না (rss.php)
+        'shareMode'   => $shareMode,
+        'shareImg'    => $shareImg,
         'status'      => $status,
         'read'        => max(1, (int)(isset($p['read']) ? $p['read'] : 1)),
         'createdAt'   => round(microtime(true) * 1000)
@@ -449,6 +578,18 @@ if ($action === 'update') {
         $img = '';
     }
 
+    /* শেয়ারের ব্যানার: নতুন এলে পুরোনোটি মুছে নতুনটি; ব্যানার বাদ দিলে মুছে যায় */
+    $shareMode = share_mode($p);
+    $shareImg = isset($old['shareImg']) ? $old['shareImg'] : '';
+    $rawShare = isset($p['shareImg']) ? (string)$p['shareImg'] : '';
+    if ($shareMode === 'banner' && strpos($rawShare, 'data:image/') === 0) {
+        remove_uploads([$shareImg]);
+        $shareImg = save_upload($rawShare, $id . '-share-' . round(microtime(true) * 1000) . '.jpg');
+    } elseif ($shareMode !== 'banner' || (array_key_exists('shareImg', $p) && $rawShare === '')) {
+        remove_uploads([$shareImg]);
+        $shareImg = '';
+    }
+
     $excerptSrc = isset($p['excerpt']) && trim((string)$p['excerpt']) !== ''
         ? $p['excerpt'] : ($bodyArr[0] ?? $plainCheck);
     $excerpt = clean($excerptSrc, 300);
@@ -472,7 +613,13 @@ if ($action === 'update') {
         'district'    => clean(isset($p['district']) ? $p['district'] : '', 60),
         'upazila'     => clean(isset($p['upazila']) ? $p['upazila'] : '', 60),
         'isLead'      => !empty($p['isLead']),
+        'leadPos'     => lead_pos($p),
+        'breaking'    => !empty($p['breaking']),   // ব্রেকিং নিউজ — প্রচ্ছদের ওপরের চলমান শিরোনামে
+        'readMore'    => read_more_ids($p),        // খবর শেষে "আরও পড়ুন"-এর বাছাই করা ২টি খবর (id)
         'exclusive'   => !empty($p['exclusive']),
+        'rss'         => !array_key_exists('rss', $p) || !empty($p['rss']),
+        'shareMode'   => $shareMode,
+        'shareImg'    => $shareImg,
         'status'      => $status,
         'read'        => max(1, (int)(isset($p['read']) ? $p['read'] : 1)),
         'createdAt'   => isset($old['createdAt']) ? $old['createdAt'] : round(microtime(true) * 1000),
@@ -508,6 +655,27 @@ if ($action === 'publish') {
     out(['ok' => true]);
 }
 
+/* ---------- ট্র্যাশে পাঠানো / ট্র্যাশ থেকে ফেরানো ------------------------------
+   ট্র্যাশের খবর সাইটে দেখা যায় না, কিন্তু ছবিসহ সব থেকে যায় — ফেরানো যায়।
+   স্থায়ীভাবে মুছতে হলে 'delete'।                                              */
+if ($action === 'trash' || $action === 'restore') {
+    $id = clean(isset($body['id']) ? $body['id'] : '', 40);
+    $list = readPosts($postFile);
+    $found = false;
+    foreach ($list as &$p) {
+        if (isset($p['id']) && (string)$p['id'] === $id) {
+            if ($action === 'trash') $p['trashed'] = round(microtime(true) * 1000);
+            else unset($p['trashed']);
+            $found = true;
+            break;
+        }
+    }
+    unset($p);
+    if (!$found) fail('খবরটি পাওয়া যায়নি।', 404);
+    if (!writePosts($postFile, $list)) fail('সংরক্ষণ করা যায়নি।', 500);
+    out(['ok' => true]);
+}
+
 /* ---------- পোস্ট মুছে ফেলা ---------------------------------------------- */
 if ($action === 'delete') {
     $id = clean(isset($body['id']) ? $body['id'] : '', 40);
@@ -522,10 +690,12 @@ if ($action === 'delete') {
     }
     if ($gone === null) fail('খবরটি পাওয়া যায়নি।', 404);
 
-    /* ছবিটিও মুছে ফেলা — শুধু uploads/ ফোল্ডারের ভেতরের ফাইল */
+    /* ছবিটিও মুছে ফেলা — শুধু uploads/ ফোল্ডারের ভেতরের ফাইল; শেয়ারের ব্যানার ও লেখার ভেতরের ছবিসহ */
     if (!empty($gone['img']) && strpos($gone['img'], 'uploads/') === 0 && strpos($gone['img'], '..') === false) {
         @unlink($base . '/' . $gone['img']);
     }
+    remove_uploads(array_merge([isset($gone['shareImg']) ? $gone['shareImg'] : ''],
+                               content_uploads(isset($gone['content']) ? $gone['content'] : '')));
 
     if (!writePosts($postFile, $kept)) fail('মুছে ফেলা যায়নি।', 500);
     out(['ok' => true]);
